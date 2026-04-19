@@ -1,19 +1,89 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@theme {
+  --color-midnightBase: #12131a;
+  --color-midnightSurface: #1a1b2e;
+  --color-midnightElevated: #222338;
+  --color-natureNode: #22d3ee;
+  --color-cityNode: #a78bfa;
+  --color-heritageNode: #fbbf24;
+  --color-textPrimary: #e8e8f0;
+  --color-textSecondary: #8888a8;
+  --color-textMuted: #55556a;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
-html, body, #root {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
+/* ─── Base ──────────────────────────── */
+:root {
+  --midnight-base: #12131a;
+  --midnight-surface: #1a1b2e;
+  --midnight-elevated: #222338;
+  --nature: #22d3ee;
+  --city: #a78bfa;
+  --heritage: #fbbf24;
 }
 
 body {
   margin: 0;
-  background-color: #0a0a1a;
-  font-family: 'Poppins', sans-serif;
+  padding: 0;
+  background-color: var(--midnight-base);
+  color: #e8e8f0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ─── Midnight Frosted Glass ──────────────── */
+.glass-panel {
+  background: rgba(26, 27, 46, 0.6);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+.glass-button {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px) saturate(1.3);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+
+.glass-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
+}
+
+/* ─── Force-Graph Canvas Fix ────────────────── */
+.force-graph-container canvas {
+  display: block !important;
+}
+
+/* ─── Scrollbar ─────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
