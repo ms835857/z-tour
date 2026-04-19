@@ -21,14 +21,15 @@ This diagram represents the user journey and how the application handles logic.
 graph TD
     A[User Opens App] --> B{Landing Page}
     B -->|Clicks 'Explore Now'| C[GraphView Component]
-    C --> D[Load Data from destinations.js]
-    D --> E[Initialize 3D Force Graph]
-    E --> F{User Interaction}
-    F -->|Search/Filter| G[Update Graph Visibility]
-    F -->|Click Node| H[Opening Floating Detail Cards]
-    H --> I[Fetch Package Data from packages.js]
-    I --> J[Display PackageDetail]
-    J -->|Back Button| C
+    C --> D[Initialize 6 Category Hubs]
+    D --> E{User Interaction}
+    E -->|Clicks a Hub| F[Bloom Animation: Load Nodes]
+    F --> G{Explore Hub}
+    G -->|Click 'Back'| D
+    G -->|Search/Filter| H[Update Node Visibility]
+    G -->|Click Node| I[Open Floating Detail Cards]
+    I --> J[Fetch Package Data]
+    J --> K[Display PackageDetail]
 ```
 
 ---

@@ -56,6 +56,7 @@ export default function GraphView({ setView }) {
   const fgRef = useRef();
   const containerRef = useRef();
   const [selectedNode, setSelectedNode] = useState(null);
+  const [activeHub, setActiveHub] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -66,19 +67,39 @@ export default function GraphView({ setView }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const graphData = useMemo(() => {
-    const nodes = destinations.map(d => ({ ...d }));
-    const links = [];
-    destinations.forEach(d => {
-      if (d.links) {
-        d.links.forEach(targetId => {
-          const targetNode = destinations.find(n => n.id === targetId);
-          if (targetNode) links.push({ source: d.id, target: targetNode.id });
-        });
-      }
+  const enrichedDestinations = useMemo(() => {
+    return destinations.map(d => {
+      const charCode = d.id.charCodeAt(0) + d.id.charCodeAt(d.id.length - 1);
+      let hub = 'Nature';
+      if (d.category === 'City') hub = charCode % 2 === 0 ? 'City Tours' : 'Budget';
+      else if (d.category === 'Nature') hub = charCode % 2 === 0 ? 'Nature' : 'Adventure';
+      else if (d.category === 'Heritage') hub = charCode % 2 === 0 ? 'Heritage' : 'Luxury';
+      return { ...d, hub };
     });
-    return { nodes, links };
   }, []);
+
+  const graphData = useMemo(() => {
+    if (!activeHub) {
+      const hubs = ['Adventure', 'Luxury', 'Budget', 'Heritage', 'Nature', 'City Tours'];
+      const nodes = hubs.map(h => ({
+        id: `hub_${h}`,
+        name: h,
+        isHub: true,
+        category: h,
+        hub: h,
+        count: enrichedDestinations.filter(d => d.hub === h).length
+      }));
+      const nodesWithCenter = [...nodes, { id: 'center', isCenter: true, name: '' }];
+      const links = nodes.map(n => ({ source: 'center', target: n.id }));
+      return { nodes: nodesWithCenter, links };
+    } else {
+      const hubNode = { id: `hub_${activeHub}`, name: activeHub, isHub: true, category: activeHub, hub: activeHub };
+      const children = enrichedDestinations.filter(d => d.hub === activeHub).map(d => ({ ...d, isChild: true }));
+      const nodes = [hubNode, ...children];
+      const links = children.map(c => ({ source: hubNode.id, target: c.id }));
+      return { nodes, links };
+    }
+  }, [activeHub, enrichedDestinations]);
 
   useEffect(() => {
     if (fgRef.current) {
@@ -97,36 +118,89 @@ export default function GraphView({ setView }) {
 
   const getCategoryColor = useCallback((category) => {
     switch (category) {
-      case 'Nature': return '#22d3ee';   // Vivid cyan
-      case 'City': return '#a78bfa';     // Vivid lavender-purple
-      case 'Heritage': return '#fbbf24'; // Vivid amber
+      case 'Nature': return '#22d3ee';
+      case 'City Tours': return '#a78bfa';
+      case 'Heritage': return '#fbbf24';
+      case 'Adventure': return '#ef4444';
+      case 'Luxury': return '#fbcfe8';
+      case 'Budget': return '#4ade80';
       default: return '#8888a8';
     }
   }, []);
 
   const isNodeVisible = useCallback((node) => {
-    if (activeFilter !== "All" && node.category !== activeFilter) return false;
+    if (node.isCenter) return false;
+    if (node.isHub) return true;
+    if (activeFilter !== "All" && node.category !== activeFilter && node.hub !== activeFilter) return false;
     if (searchQuery && !node.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     return true;
   }, [activeFilter, searchQuery]);
 
   const handleNodeClick = useCallback((node) => {
-    setSelectedNode(node);
+    if (node.isCenter) return;
+    if (node.isHub) {
+      if (activeHub !== node.hub) {
+        setActiveHub(node.hub);
+        setSelectedNode(null);
+      } else {
+        setActiveHub(null);
+        setSelectedNode(null);
+      }
+    } else {
+      setSelectedNode(node);
+    }
     if (fgRef.current) {
-      const distance = 120;
+      const distance = node.isHub && !activeHub ? 200 : 120;
       const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
       fgRef.current.cameraPosition(
         { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
         node, 1500
       );
     }
-  }, []);
+  }, [activeHub]);
 
   const nodeThreeObject = useCallback((node) => {
+    if (node.isCenter) {
+      return new THREE.Group();
+    }
+
     const visible = isNodeVisible(node);
-    const colorHex = getCategoryColor(node.category);
+    const colorHex = getCategoryColor(node.hub || node.category);
     const color = new THREE.Color(colorHex);
     const group = new THREE.Group();
+
+    if (node.isHub) {
+      const geo = new THREE.SphereGeometry(14, 32, 32);
+      const mat = new THREE.MeshStandardMaterial({
+        color, emissive: color, emissiveIntensity: 0.6,
+        transparent: true, opacity: 1, roughness: 0.2, metalness: 0.8
+      });
+      group.add(new THREE.Mesh(geo, mat));
+
+      const ringGeo = new THREE.RingGeometry(18, 20, 32);
+      const ringMat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.4 });
+      group.add(new THREE.Mesh(ringGeo, ringMat));
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = 512;
+      canvas.height = 128;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.font = '800 36px Inter, system-ui, sans-serif';
+      ctx.fillStyle = colorHex;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${node.name.toUpperCase()} ${node.count ? '(' + node.count + ')' : ''}`, canvas.width / 2, canvas.height / 2);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+      sprite.scale.set(70, 17.5, 1);
+      sprite.position.set(0, 25, 0);
+      group.add(sprite);
+
+      return group;
+    }
 
     // Core – glowing sphere
     const geo = new THREE.SphereGeometry(visible ? 6 : 3, 32, 32);
@@ -194,13 +268,8 @@ export default function GraphView({ setView }) {
   }, [isNodeVisible, getCategoryColor]);
 
   const linkColor = useCallback((link) => {
-    const sn = typeof link.source === 'object' ? link.source : destinations.find(n => n.id === link.source);
-    const tn = typeof link.target === 'object' ? link.target : destinations.find(n => n.id === link.target);
-    let vis = true;
-    if (activeFilter !== "All" && sn?.category !== activeFilter && tn?.category !== activeFilter) vis = false;
-    if (searchQuery && !sn?.name.toLowerCase().includes(searchQuery.toLowerCase()) && !tn?.name.toLowerCase().includes(searchQuery.toLowerCase())) vis = false;
-    return vis ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.015)';
-  }, [activeFilter, searchQuery]);
+    return 'rgba(255,255,255,0.06)';
+  }, []);
 
   return (
     <motion.div
@@ -213,54 +282,90 @@ export default function GraphView({ setView }) {
     >
       <MidnightBackground />
 
-      {/* Back */}
-      <div className="absolute top-4 left-4 z-20">
+      {/* Back & Hub State */}
+      <div className="absolute top-4 left-4 z-20 flex gap-4 items-center">
         <motion.button
-          onClick={() => setView('landing')}
+          onClick={() => {
+            if (activeHub) {
+              setActiveHub(null);
+              setSelectedNode(null);
+            } else setView('landing');
+          }}
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
-          className="glass-button p-3 rounded-full"
-          style={{ color: '#e8e8f0' }}
+          className="glass-button p-3 rounded-full flex items-center justify-center"
+          style={{ color: '#e8e8f0', width: 48, height: 48 }}
         >
           <ArrowLeft size={24} />
         </motion.button>
+        
+        <AnimatePresence>
+          {activeHub && (
+            <motion.div 
+              initial={{ opacity: 0, x: -20 }} 
+              animate={{ opacity: 1, x: 0 }} 
+              exit={{ opacity: 0, x: -20 }}
+              className="glass-panel px-6 py-2 rounded-full font-bold text-lg"
+              style={{ color: getCategoryColor(activeHub) }}
+            >
+              {activeHub}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      <FilterBar
-        activeFilter={activeFilter} setActiveFilter={setActiveFilter}
-        searchQuery={searchQuery} setSearchQuery={setSearchQuery}
-      />
+      <AnimatePresence>
+        {activeHub && (
+          <FilterBar
+            activeFilter={activeFilter} setActiveFilter={setActiveFilter}
+            searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Counter */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 1, duration: 0.5 }}
-        className="absolute bottom-6 left-6 z-20 glass-panel px-5 py-3 rounded-2xl text-sm"
-      >
-        <span style={{ color: '#8888a8' }}>Showing </span>
-        <span style={{ color: '#22d3ee', fontWeight: 700 }}>
-          {destinations.filter(d => isNodeVisible(d)).length}
-        </span>
-        <span style={{ color: '#8888a8' }}> of {destinations.length} destinations</span>
-      </motion.div>
+      <AnimatePresence>
+        {activeHub && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-6 left-6 z-20 glass-panel px-5 py-3 rounded-2xl text-sm"
+          >
+            <span style={{ color: '#8888a8' }}>Showing </span>
+            <span style={{ color: getCategoryColor(activeHub), fontWeight: 700 }}>
+              {graphData.nodes.filter(d => d.isChild && isNodeVisible(d)).length}
+            </span>
+            <span style={{ color: '#8888a8' }}> in {activeHub}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Legend */}
-      <motion.div
-        initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-        transition={{ delay: 1.2, duration: 0.5 }}
-        className="absolute bottom-6 right-6 z-20 glass-panel px-5 py-3 rounded-2xl flex gap-4 text-xs"
-      >
-        {[
-          { label: 'Nature', color: '#22d3ee' },
-          { label: 'City', color: '#a78bfa' },
-          { label: 'Heritage', color: '#fbbf24' },
-        ].map(({ label, color }) => (
-          <div key={label} className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}50` }} />
-            <span style={{ color: '#8888a8' }}>{label}</span>
-          </div>
-        ))}
-      </motion.div>
+      <AnimatePresence>
+        {!activeHub && (
+          <motion.div
+            initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
+            transition={{ delay: 1.2, duration: 0.5 }}
+            className="absolute bottom-6 right-6 z-20 glass-panel px-5 py-3 rounded-2xl flex flex-col gap-3 text-xs"
+          >
+            <p className="text-gray-400 font-semibold mb-1">Explore Hubs:</p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+              {[
+                { label: 'Nature', color: '#22d3ee' },
+                { label: 'City Tours', color: '#a78bfa' },
+                { label: 'Heritage', color: '#fbbf24' },
+                { label: 'Adventure', color: '#ef4444' },
+                { label: 'Luxury', color: '#fbcfe8' },
+                { label: 'Budget', color: '#4ade80' },
+              ].map(({ label, color }) => (
+                <div key={label} className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}50` }} />
+                  <span style={{ color: '#8888a8' }}>{label}</span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 3D Force Graph — transparent so midnight mesh shows through */}
       <div ref={containerRef} className="w-full h-full relative" style={{ zIndex: 1 }}>
@@ -279,7 +384,7 @@ export default function GraphView({ setView }) {
       </div>
 
       <AnimatePresence>
-        {selectedNode && (
+        {selectedNode && !selectedNode.isHub && !selectedNode.isCenter && (
           <FloatingCards
             node={selectedNode}
             fgRef={fgRef}
