@@ -52,11 +52,14 @@ function MidnightBackground() {
   );
 }
 
+const ImageCache = new Map();
+
 export default function GraphView({ setView }) {
   const fgRef = useRef();
   const containerRef = useRef();
   const [selectedNode, setSelectedNode] = useState(null);
   const [activeHub, setActiveHub] = useState(null);
+  const [hoverNode, setHoverNode] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -159,6 +162,15 @@ export default function GraphView({ setView }) {
     }
   }, [activeHub]);
 
+  const drawHexagon = (ctx, x, y, r) => {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 3) * i + Math.PI / 6;
+      ctx.lineTo(x + r * Math.cos(angle), y + r * Math.sin(angle));
+    }
+    ctx.closePath();
+  };
+
   const nodeThreeObject = useCallback((node) => {
     if (node.isCenter) {
       return new THREE.Group();
@@ -191,7 +203,7 @@ export default function GraphView({ setView }) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(`${node.name.toUpperCase()} ${node.count ? '(' + node.count + ')' : ''}`, canvas.width / 2, canvas.height / 2);
-      
+
       const texture = new THREE.CanvasTexture(canvas);
       texture.needsUpdate = true;
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
@@ -202,70 +214,127 @@ export default function GraphView({ setView }) {
       return group;
     }
 
-    // Core – glowing sphere
-    const geo = new THREE.SphereGeometry(visible ? 6 : 3, 32, 32);
-    const mat = new THREE.MeshStandardMaterial({
-      color, emissive: color,
-      emissiveIntensity: visible ? 0.7 : 0.05,
-      transparent: true, opacity: visible ? 1 : 0.12,
-      roughness: 0.25, metalness: 0.15,
-    });
-    group.add(new THREE.Mesh(geo, mat));
+    if (!visible) return new THREE.Group();
+    const isHovered = hoverNode && hoverNode.id === node.id;
 
-    // Neon glow halo
-    if (visible) {
-      const glowGeo = new THREE.SphereGeometry(10, 32, 32);
-      const glowMat = new THREE.MeshBasicMaterial({
-        color, transparent: true, opacity: 0.08, side: THREE.BackSide,
-      });
-      group.add(new THREE.Mesh(glowGeo, glowMat));
-    }
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
 
-    // Label – frosted midnight pill
-    if (visible) {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = 256;
-      canvas.height = 64;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const cx = 256;
+    const cy = 256;
+    const hexRadius = 140;
 
-      const text = node.name;
-      ctx.font = '600 22px Inter, system-ui, sans-serif';
-      const tw = ctx.measureText(text).width;
-      const pw = Math.min(tw + 28, 248);
-      const px = (canvas.width - pw) / 2;
+    // Glowing shadow border
+    ctx.shadowColor = colorHex;
+    ctx.shadowBlur = isHovered ? 45 : 20;
 
-      // Midnight frosted pill
-      ctx.fillStyle = 'rgba(26, 27, 46, 0.85)';
-      ctx.beginPath();
-      ctx.roundRect(px, 8, pw, 38, 19);
+    // Hexagon background placeholder
+    ctx.fillStyle = '#1a1b2e';
+    drawHexagon(ctx, cx, cy, hexRadius);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+
+    const imgData = ImageCache.get(node.id);
+    const hasImageURL = !!node.imageUrl;
+
+    if (!hasImageURL || imgData === 'error') {
+      // Draw geometric placeholder
+      ctx.save();
+      drawHexagon(ctx, cx, cy, hexRadius);
+      ctx.clip();
+
+      // Dynamic gradient based on category color
+      const gradient = ctx.createLinearGradient(cx - hexRadius, cy - hexRadius, cx + hexRadius, cy + hexRadius);
+      gradient.addColorStop(0, colorHex + '40'); // 40 is hex opacity for ~25%
+      gradient.addColorStop(1, '#12131a');
+      ctx.fillStyle = gradient;
       ctx.fill();
 
-      // Subtle accent border
-      ctx.strokeStyle = colorHex + '30';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(px, 8, pw, 38, 19);
-      ctx.stroke();
-
-      // White text for legibility
-      ctx.fillStyle = '#e8e8f0';
+      // Draw Initials
+      ctx.font = '800 72px Inter, system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(text, canvas.width / 2, 28);
+      const initials = node.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+      ctx.fillText(initials, cx, cy);
 
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.needsUpdate = true;
-      const sprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false })
-      );
-      sprite.scale.set(40, 10, 1);
-      sprite.position.set(0, 14, 0);
-      group.add(sprite);
+      ctx.restore();
+    } else if (!imgData) {
+      ImageCache.set(node.id, 'loading');
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = node.imageUrl;
+      img.onload = () => {
+        ImageCache.set(node.id, img);
+        if (node.__spriteMat && node.__spriteCanvas) {
+          const tCtx = node.__spriteCanvas.getContext('2d');
+          tCtx.save();
+          drawHexagon(tCtx, cx, cy, hexRadius);
+          tCtx.clip();
+          tCtx.drawImage(img, cx - hexRadius, cy - hexRadius, hexRadius * 2, hexRadius * 2);
+          tCtx.restore();
+          tCtx.lineWidth = isHovered ? 12 : 6;
+          tCtx.strokeStyle = colorHex;
+          drawHexagon(tCtx, cx, cy, hexRadius);
+          tCtx.stroke();
+          node.__spriteMat.map.needsUpdate = true;
+        }
+      };
+      // Error handling for broken image URLs fallback
+      img.onerror = () => {
+        ImageCache.set(node.id, 'error');
+      };
+    } else if (imgData && imgData !== 'loading' && imgData !== 'error') {
+      ctx.save();
+      drawHexagon(ctx, cx, cy, hexRadius);
+      ctx.clip();
+      ctx.drawImage(imgData, cx - hexRadius, cy - hexRadius, hexRadius * 2, hexRadius * 2);
+      ctx.restore();
     }
 
-    return group;
-  }, [isNodeVisible, getCategoryColor]);
+    ctx.lineWidth = isHovered ? 12 : 6;
+    ctx.strokeStyle = colorHex;
+    drawHexagon(ctx, cx, cy, hexRadius);
+    ctx.stroke();
+
+    if (isHovered) {
+      ctx.font = '800 36px Inter, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      const textY = cy + hexRadius + 15;
+
+      const textW = ctx.measureText(node.name).width + 50;
+      ctx.fillStyle = 'rgba(18, 19, 26, 0.9)';
+      ctx.beginPath();
+      ctx.roundRect(cx - textW / 2, textY, textW, 55, 27);
+      ctx.fill();
+
+      ctx.strokeStyle = colorHex;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(node.name, cx, textY + 10);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+
+    // THREE.Sprite natively perfectly billboards (faces camera)
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(spriteMaterial);
+
+    const scaleFactor = isHovered ? 28 : 24;
+    sprite.scale.set(scaleFactor, scaleFactor, 1);
+
+    node.__spriteMat = spriteMaterial;
+    node.__spriteCanvas = canvas;
+
+    return sprite;
+  }, [isNodeVisible, getCategoryColor, hoverNode]);
 
   const linkColor = useCallback((link) => {
     return 'rgba(255,255,255,0.06)';
@@ -298,12 +367,12 @@ export default function GraphView({ setView }) {
         >
           <ArrowLeft size={24} />
         </motion.button>
-        
+
         <AnimatePresence>
           {activeHub && (
-            <motion.div 
-              initial={{ opacity: 0, x: -20 }} 
-              animate={{ opacity: 1, x: 0 }} 
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
               className="glass-panel px-6 py-2 rounded-full font-bold text-lg"
               style={{ color: getCategoryColor(activeHub) }}
@@ -373,7 +442,7 @@ export default function GraphView({ setView }) {
           ref={fgRef} graphData={graphData}
           nodeThreeObject={nodeThreeObject} nodeThreeObjectExtend={false}
           onNodeClick={handleNodeClick}
-          onNodeHover={node => { if (containerRef.current) containerRef.current.style.cursor = node ? 'pointer' : 'grab'; }}
+          onNodeHover={node => { setHoverNode(node); if (containerRef.current) containerRef.current.style.cursor = node ? 'pointer' : 'grab'; }}
           backgroundColor="rgba(0,0,0,0)"
           width={dimensions.width} height={dimensions.height}
           linkWidth={1.5} linkColor={linkColor} linkOpacity={0.5} linkResolution={6}

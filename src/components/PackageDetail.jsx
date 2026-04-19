@@ -71,6 +71,17 @@ export default function PackageDetail({ pkg, destinationName, destinationCategor
           </motion.button>
         </div>
 
+        {/* Hero Image */}
+        <div className="w-full h-44 mb-5 rounded-2xl overflow-hidden relative" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
+           <img 
+              src={`https://loremflickr.com/600/300/pakistan,${encodeURIComponent(destinationName.replace(/ /g, ','))}`}
+              alt={destinationName}
+              className="w-full h-full object-cover"
+           />
+           {/* Subtle gradient overlay to blend */}
+           <div className="absolute inset-0 bg-gradient-to-t from-[rgba(26,27,46,0.8)] to-transparent opacity-80 mix-blend-multiply"></div>
+        </div>
+
         {/* Agent & Destination */}
         <div className="flex items-center gap-3 mb-2">
           <span className="text-2xl">{pkg.agentLogo}</span>
