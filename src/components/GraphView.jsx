@@ -77,27 +77,44 @@ export default function GraphView({ setView }) {
       if (d.category === 'City') hub = charCode % 2 === 0 ? 'City Tours' : 'Budget';
       else if (d.category === 'Nature') hub = charCode % 2 === 0 ? 'Nature' : 'Adventure';
       else if (d.category === 'Heritage') hub = charCode % 2 === 0 ? 'Heritage' : 'Luxury';
-      return { ...d, hub };
+      
+      // Add dynamically generated image URL from API
+      const imageUrl = `https://loremflickr.com/300/300/pakistan,${encodeURIComponent(d.name.replace(/ /g, ','))}`;
+      
+      return { ...d, hub, imageUrl };
     });
   }, []);
 
   const graphData = useMemo(() => {
     if (!activeHub) {
       const hubs = ['Adventure', 'Luxury', 'Budget', 'Heritage', 'Nature', 'City Tours'];
-      const nodes = hubs.map(h => ({
-        id: `hub_${h}`,
-        name: h,
-        isHub: true,
-        category: h,
-        hub: h,
-        count: enrichedDestinations.filter(d => d.hub === h).length
-      }));
+      const nodes = hubs.map(h => {
+        const related = enrichedDestinations.filter(d => d.hub === h);
+        return {
+          id: `hub_${h}`,
+          name: h,
+          isHub: true,
+          category: h,
+          hub: h,
+          count: related.length,
+          sampleImages: related.slice(0, 4).map(d => d.imageUrl)
+        };
+      });
       const nodesWithCenter = [...nodes, { id: 'center', isCenter: true, name: '' }];
       const links = nodes.map(n => ({ source: 'center', target: n.id }));
       return { nodes: nodesWithCenter, links };
     } else {
-      const hubNode = { id: `hub_${activeHub}`, name: activeHub, isHub: true, category: activeHub, hub: activeHub };
-      const children = enrichedDestinations.filter(d => d.hub === activeHub).map(d => ({ ...d, isChild: true }));
+      const related = enrichedDestinations.filter(d => d.hub === activeHub);
+      const hubNode = { 
+        id: `hub_${activeHub}`, 
+        name: activeHub, 
+        isHub: true, 
+        category: activeHub, 
+        hub: activeHub,
+        count: related.length,
+        sampleImages: related.slice(0, 4).map(d => d.imageUrl)
+      };
+      const children = related.map(d => ({ ...d, isChild: true }));
       const nodes = [hubNode, ...children];
       const links = children.map(c => ({ source: hubNode.id, target: c.id }));
       return { nodes, links };
@@ -171,59 +188,112 @@ export default function GraphView({ setView }) {
     ctx.closePath();
   };
 
-  const nodeThreeObject = useCallback((node) => {
-    if (node.isCenter) {
-      return new THREE.Group();
+  const drawOctagon = (ctx, x, y, r) => {
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI / 4) * i + Math.PI / 8;
+      ctx.lineTo(x + r * Math.cos(angle), y + r * Math.sin(angle));
     }
+    ctx.closePath();
+  };
+
+  const nodeThreeObject = useCallback((node) => {
+    if (node.isCenter) return new THREE.Group();
 
     const visible = isNodeVisible(node);
     const colorHex = getCategoryColor(node.hub || node.category);
-    const color = new THREE.Color(colorHex);
-    const group = new THREE.Group();
-
-    if (node.isHub) {
-      const geo = new THREE.SphereGeometry(14, 32, 32);
-      const mat = new THREE.MeshStandardMaterial({
-        color, emissive: color, emissiveIntensity: 0.6,
-        transparent: true, opacity: 1, roughness: 0.2, metalness: 0.8
-      });
-      group.add(new THREE.Mesh(geo, mat));
-
-      const ringGeo = new THREE.RingGeometry(18, 20, 32);
-      const ringMat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.4 });
-      group.add(new THREE.Mesh(ringGeo, ringMat));
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = 512;
-      canvas.height = 128;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.font = '800 36px Inter, system-ui, sans-serif';
-      ctx.fillStyle = colorHex;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(`${node.name.toUpperCase()} ${node.count ? '(' + node.count + ')' : ''}`, canvas.width / 2, canvas.height / 2);
-
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.needsUpdate = true;
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
-      sprite.scale.set(70, 17.5, 1);
-      sprite.position.set(0, 25, 0);
-      group.add(sprite);
-
-      return group;
-    }
-
-    if (!visible) return new THREE.Group();
     const isHovered = hoverNode && hoverNode.id === node.id;
+    const color = new THREE.Color(colorHex);
 
     const canvas = document.createElement('canvas');
     canvas.width = 512;
     canvas.height = 512;
     const ctx = canvas.getContext('2d');
-
     const cx = 256;
     const cy = 256;
+
+    if (node.isHub) {
+      const octRadius = 180;
+      // Glowing shadow border
+      ctx.shadowColor = colorHex;
+      ctx.shadowBlur = isHovered ? 50 : 25;
+
+      // Octagon background
+      ctx.fillStyle = '#1a1b2e';
+      drawOctagon(ctx, cx, cy, octRadius);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Draw collage if we have images
+      if (node.sampleImages && node.sampleImages.length > 0) {
+        ctx.save();
+        drawOctagon(ctx, cx, cy, octRadius);
+        ctx.clip();
+
+        // 2x2 grid positions
+        const cellSize = octRadius;
+        const offsets = [
+          { x: cx - cellSize, y: cy - cellSize },
+          { x: cx, y: cy - cellSize },
+          { x: cx - cellSize, y: cy },
+          { x: cx, y: cy }
+        ];
+
+        node.sampleImages.forEach((url, i) => {
+          const imgId = `${node.id}_img_${i}`;
+          const imgData = ImageCache.get(imgId);
+          if (imgData && imgData !== 'loading' && imgData !== 'error') {
+            ctx.drawImage(imgData, offsets[i].x, offsets[i].y, cellSize, cellSize);
+          } else if (!imgData) {
+            ImageCache.set(imgId, 'loading');
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.src = url;
+            img.onload = () => {
+              ImageCache.set(imgId, img);
+              if (node.__spriteMat) node.__spriteMat.map.needsUpdate = true;
+            };
+            img.onerror = () => ImageCache.set(imgId, 'error');
+          }
+        });
+
+        // Dark overlay for text readability
+        ctx.fillStyle = 'rgba(12, 13, 26, 0.45)';
+        drawOctagon(ctx, cx, cy, octRadius);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Border
+      ctx.lineWidth = isHovered ? 15 : 8;
+      ctx.strokeStyle = colorHex;
+      drawOctagon(ctx, cx, cy, octRadius);
+      ctx.stroke();
+
+      // HUB Text
+      ctx.font = '800 48px Inter, system-ui, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.8)';
+      ctx.shadowBlur = 10;
+      ctx.fillText(node.name.toUpperCase(), cx, cy - 15);
+      
+      ctx.font = '600 28px Inter, system-ui, sans-serif';
+      ctx.fillStyle = colorHex;
+      ctx.fillText(`${node.count} DESTINATIONS`, cx, cy + 35);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+      const sprite = new THREE.Sprite(spriteMaterial);
+      const scale = isHovered ? 45 : 40;
+      sprite.scale.set(scale, scale, 1);
+      node.__spriteMat = spriteMaterial;
+      return sprite;
+    }
+
+    if (!visible) return new THREE.Group();
     const hexRadius = 140;
 
     // Glowing shadow border
