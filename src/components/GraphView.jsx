@@ -11,7 +11,39 @@ import FloatingCards from './FloatingCards';
 function MidnightBackground() {
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 0 }}>
-      <div className="absolute inset-0" style={{ backgroundColor: '#12131a' }} />
+      {/* Cinematic Base Layer */}
+      <div 
+        className="absolute inset-0" 
+        style={{ 
+          backgroundImage: 'url(/bg-tourism.png)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          opacity: 0.4, 
+        }} 
+      />
+
+      {/* Topographic Glow Overlay */}
+      <div 
+        className="absolute inset-0" 
+        style={{ 
+          backgroundImage: 'url(/topo-overlay.png)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          opacity: 0.2, 
+          mixBlendMode: 'screen',
+        }} 
+      />
+      
+      {/* Vignette & Tint Overlay to ensure 3D clarity */}
+      <div 
+        className="absolute inset-0" 
+        style={{ 
+          background: 'radial-gradient(circle at center, transparent 20%, #12131a 100%), #12131a',
+          mixBlendMode: 'multiply',
+          opacity: 0.7
+        }} 
+      />
+
       {/* Indigo wash */}
       <motion.div
         className="absolute rounded-full"
