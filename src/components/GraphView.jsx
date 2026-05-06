@@ -12,36 +12,36 @@ function MidnightBackground() {
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 0 }}>
       {/* Cinematic Base Layer */}
-      <div 
-        className="absolute inset-0" 
-        style={{ 
+      <div
+        className="absolute inset-0"
+        style={{
           backgroundImage: 'url(/bg-tourism.png)',
           backgroundSize: 'cover',
           backgroundPosition: 'center',
-          opacity: 0.4, 
-        }} 
+          opacity: 0.4,
+        }}
       />
 
       {/* Topographic Glow Overlay */}
-      <div 
-        className="absolute inset-0" 
-        style={{ 
+      <div
+        className="absolute inset-0"
+        style={{
           backgroundImage: 'url(/topo-overlay.png)',
           backgroundSize: 'cover',
           backgroundPosition: 'center',
-          opacity: 0.2, 
+          opacity: 0.2,
           mixBlendMode: 'screen',
-        }} 
+        }}
       />
-      
+
       {/* Vignette & Tint Overlay to ensure 3D clarity */}
-      <div 
-        className="absolute inset-0" 
-        style={{ 
+      <div
+        className="absolute inset-0"
+        style={{
           background: 'radial-gradient(circle at center, transparent 20%, #12131a 100%), #12131a',
           mixBlendMode: 'multiply',
           opacity: 0.7
-        }} 
+        }}
       />
 
       {/* Indigo wash */}
@@ -109,10 +109,10 @@ export default function GraphView({ setView }) {
       if (d.category === 'City') hub = charCode % 2 === 0 ? 'City Tours' : 'Budget';
       else if (d.category === 'Nature') hub = charCode % 2 === 0 ? 'Nature' : 'Adventure';
       else if (d.category === 'Heritage') hub = charCode % 2 === 0 ? 'Heritage' : 'Luxury';
-      
+
       // Add dynamically generated image URL from API
       const imageUrl = `https://loremflickr.com/300/300/pakistan,${encodeURIComponent(d.name.replace(/ /g, ','))}`;
-      
+
       return { ...d, hub, imageUrl };
     });
   }, []);
@@ -137,11 +137,11 @@ export default function GraphView({ setView }) {
       return { nodes: nodesWithCenter, links };
     } else {
       const related = enrichedDestinations.filter(d => d.hub === activeHub);
-      const hubNode = { 
-        id: `hub_${activeHub}`, 
-        name: activeHub, 
-        isHub: true, 
-        category: activeHub, 
+      const hubNode = {
+        id: `hub_${activeHub}`,
+        name: activeHub,
+        isHub: true,
+        category: activeHub,
         hub: activeHub,
         count: related.length,
         sampleImages: related.slice(0, 4).map(d => d.imageUrl)
@@ -310,7 +310,7 @@ export default function GraphView({ setView }) {
       ctx.shadowColor = 'rgba(0,0,0,0.8)';
       ctx.shadowBlur = 10;
       ctx.fillText(node.name.toUpperCase(), cx, cy - 15);
-      
+
       ctx.font = '600 28px Inter, system-ui, sans-serif';
       ctx.fillStyle = colorHex;
       ctx.fillText(`${node.count} DESTINATIONS`, cx, cy + 35);
