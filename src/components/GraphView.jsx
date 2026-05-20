@@ -4,7 +4,10 @@ import ForceGraph3D from 'react-force-graph-3d';
 import * as THREE from 'three';
 import { ArrowLeft } from 'lucide-react';
 import { destinations } from '../data/destinations';
+import { packages } from '../data/packages';
+import { getProvince, getLinkageType } from '../data/helpers';
 import FilterBar from './FilterBar';
+import FloatingFilters from './FloatingFilters';
 import FloatingCards from './FloatingCards';
 
 /* ─── Midnight ambient mesh behind the graph ─── */
@@ -92,9 +95,17 @@ export default function GraphView({ setView }) {
   const [selectedNode, setSelectedNode] = useState(null);
   const [activeHub, setActiveHub] = useState(null);
   const [hoverNode, setHoverNode] = useState(null);
+  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+
+  // Basic filters (Category bar)
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
-  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+
+  // Advanced right-sidebar filters
+  const [activeProvince, setActiveProvince] = useState("All");
+  const [activeBudget, setActiveBudget] = useState("All");
+  const [activeDuration, setActiveDuration] = useState("All");
+  const [activeGroupSize, setActiveGroupSize] = useState(1);
 
   useEffect(() => {
     const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
@@ -110,63 +121,36 @@ export default function GraphView({ setView }) {
       else if (d.category === 'Nature') hub = charCode % 2 === 0 ? 'Nature' : 'Adventure';
       else if (d.category === 'Heritage') hub = charCode % 2 === 0 ? 'Heritage' : 'Luxury';
 
-      // Add dynamically generated image URL from API
-      const imageUrl = `https://loremflickr.com/300/300/pakistan,${encodeURIComponent(d.name.replace(/ /g, ','))}`;
+      // Add dynamically generated image URL from API (using CORS-compliant picsum.photos seed)
+      const imageUrl = `https://picsum.photos/seed/${d.id}/300/300`;
+      const province = getProvince(d);
 
-      return { ...d, hub, imageUrl };
+      return { ...d, hub, province, imageUrl, isChild: true };
     });
   }, []);
 
-  const graphData = useMemo(() => {
-    if (!activeHub) {
-      const hubs = ['Adventure', 'Luxury', 'Budget', 'Heritage', 'Nature', 'City Tours'];
-      const nodes = hubs.map(h => {
-        const related = enrichedDestinations.filter(d => d.hub === h);
-        return {
-          id: `hub_${h}`,
-          name: h,
-          isHub: true,
-          category: h,
-          hub: h,
-          count: related.length,
-          sampleImages: related.slice(0, 4).map(d => d.imageUrl)
-        };
-      });
-      const nodesWithCenter = [...nodes, { id: 'center', isCenter: true, name: '' }];
-      const links = nodes.map(n => ({ source: 'center', target: n.id }));
-      return { nodes: nodesWithCenter, links };
-    } else {
-      const related = enrichedDestinations.filter(d => d.hub === activeHub);
-      const hubNode = {
-        id: `hub_${activeHub}`,
-        name: activeHub,
+  // 100% stable references for static hub nodes and center node
+  const { centerNode, hubNodes, hubNodesMap } = useMemo(() => {
+    const center = { id: 'center', isCenter: true, name: '' };
+    const hubs = ['Adventure', 'Luxury', 'Budget', 'Heritage', 'Nature', 'City Tours'];
+    const nodes = hubs.map(h => {
+      const related = enrichedDestinations.filter(d => d.hub === h);
+      return {
+        id: `hub_${h}`,
+        name: h,
         isHub: true,
-        category: activeHub,
-        hub: activeHub,
+        category: h,
+        hub: h,
         count: related.length,
         sampleImages: related.slice(0, 4).map(d => d.imageUrl)
       };
-      const children = related.map(d => ({ ...d, isChild: true }));
-      const nodes = [hubNode, ...children];
-      const links = children.map(c => ({ source: hubNode.id, target: c.id }));
-      return { nodes, links };
-    }
-  }, [activeHub, enrichedDestinations]);
-
-  useEffect(() => {
-    if (fgRef.current) {
-      fgRef.current.cameraPosition({ x: 0, y: 0, z: 350 });
-
-      const scene = fgRef.current.scene();
-      // Soft ambient for midnight scene
-      const ambient = new THREE.AmbientLight(0x8888cc, 0.6);
-      scene.add(ambient);
-      // Warm directional to bring out node materials
-      const dirLight = new THREE.DirectionalLight(0xffeedd, 0.4);
-      dirLight.position.set(150, 200, 150);
-      scene.add(dirLight);
-    }
-  }, []);
+    });
+    const map = {};
+    nodes.forEach(n => {
+      map[n.hub] = n;
+    });
+    return { centerNode: center, hubNodes: nodes, hubNodesMap: map };
+  }, [enrichedDestinations]);
 
   const getCategoryColor = useCallback((category) => {
     switch (category) {
@@ -183,10 +167,62 @@ export default function GraphView({ setView }) {
   const isNodeVisible = useCallback((node) => {
     if (node.isCenter) return false;
     if (node.isHub) return true;
+
+    // 1. Basic category filter (from FilterBar)
     if (activeFilter !== "All" && node.category !== activeFilter && node.hub !== activeFilter) return false;
+
+    // 2. Search query filter
     if (searchQuery && !node.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    return true;
-  }, [activeFilter, searchQuery]);
+
+    // 3. Province filter (from advanced FloatingFilters)
+    if (activeProvince !== "All" && node.province !== activeProvince) return false;
+
+    // 4. Advanced package filters (Budget, Duration, Group Size)
+    const nodePkgs = packages[node.id] || [];
+    if (nodePkgs.length === 0) {
+      // If a node has no packages, it only matches if all advanced filters are 'All' / default
+      if (activeBudget !== "All" || activeDuration !== "All" || activeGroupSize > 1) {
+        return false;
+      }
+      return true;
+    }
+
+    // Node is visible if at least one package matches ALL selected advanced criteria
+    const hasMatchingPkg = nodePkgs.some(pkg => {
+      // A. Budget Limit
+      if (activeBudget !== "All") {
+        const price = pkg.priceValue || 0;
+        if (activeBudget === 'budget' && price >= 30000) return false;
+        if (activeBudget === 'mid' && (price < 30000 || price > 60000)) return false;
+        if (activeBudget === 'premium' && (price < 60000 || price > 100000)) return false;
+        if (activeBudget === 'luxury' && price <= 100000) return false;
+      }
+
+      // B. Duration
+      if (activeDuration !== "All") {
+        const days = parseInt(pkg.duration, 10) || 1;
+        if (activeDuration === 'day' && days !== 1) return false;
+        if (activeDuration === 'weekend' && (days < 2 || days > 3)) return false;
+        if (activeDuration === 'mid' && (days < 4 || days > 7)) return false;
+        if (activeDuration === 'long' && days < 8) return false;
+      }
+
+      // C. Group size limit
+      if (activeGroupSize > 1) {
+        const groupStr = pkg.groupSize || '';
+        const matches = groupStr.match(/(\d+)(?:\s*-\s*(\d+))?/);
+        if (matches) {
+          const min = parseInt(matches[1], 10);
+          const max = matches[2] ? parseInt(matches[2], 10) : min;
+          if (activeGroupSize < min || activeGroupSize > max) return false;
+        }
+      }
+
+      return true;
+    });
+
+    return hasMatchingPkg;
+  }, [activeFilter, searchQuery, activeProvince, activeBudget, activeDuration, activeGroupSize]);
 
   const handleNodeClick = useCallback((node) => {
     if (node.isCenter) return;
@@ -210,6 +246,174 @@ export default function GraphView({ setView }) {
       );
     }
   }, [activeHub]);
+
+  const flyToNode = useCallback((nodeId, retries = 10) => {
+    if (!fgRef.current) return;
+    const gData = fgRef.current.graphData();
+    if (!gData || !gData.nodes) {
+      if (retries > 0) {
+        setTimeout(() => flyToNode(nodeId, retries - 1), 100);
+      }
+      return;
+    }
+    const currentNodes = gData.nodes;
+    const node = currentNodes.find(n => n.id === nodeId);
+    if (!node) {
+      if (retries > 0) {
+        setTimeout(() => flyToNode(nodeId, retries - 1), 100);
+      }
+      return;
+    }
+
+    const x = node.x;
+    const y = node.y;
+    const z = node.z;
+
+    if (x === undefined || y === undefined || z === undefined || x === null || y === null || z === null || (x === 0 && y === 0 && z === 0)) {
+      if (retries > 0) {
+        setTimeout(() => flyToNode(nodeId, retries - 1), 100);
+      }
+      return;
+    }
+
+    const hyp = Math.hypot(x, y, z);
+    if (!isFinite(hyp) || hyp < 0.01) {
+      if (retries > 0) {
+        setTimeout(() => flyToNode(nodeId, retries - 1), 100);
+      }
+      return;
+    }
+
+    setSelectedNode(node);
+
+    const distance = 120;
+    const distRatio = 1 + distance / hyp;
+    fgRef.current.cameraPosition(
+      { x: x * distRatio, y: y * distRatio, z: z * distRatio },
+      node,
+      1500
+    );
+  }, []);
+
+  // Real-Time Search Auto-Focus (Camera fly-in transition as the user types)
+  useEffect(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (query.length < 3) return;
+
+    // Search enriched destinations for a match
+    const targetDest = enrichedDestinations.find(d =>
+      d.name.toLowerCase().includes(query)
+    );
+
+    if (targetDest) {
+      if (activeHub !== targetDest.hub) {
+        setActiveHub(targetDest.hub);
+        setSelectedNode(null);
+      }
+      flyToNode(targetDest.id);
+    }
+  }, [searchQuery, enrichedDestinations, activeHub, flyToNode]);
+
+  const graphData = useMemo(() => {
+    const isFilterActive =
+      searchQuery.trim().length > 0 ||
+      activeFilter !== "All" ||
+      activeProvince !== "All" ||
+      activeBudget !== "All" ||
+      activeDuration !== "All" ||
+      activeGroupSize > 1;
+
+    if (!activeHub) {
+      const centerToHubLinks = hubNodes.map(n => ({ source: 'center', target: n.id }));
+
+      if (isFilterActive) {
+        // Find visible children matching the active filters
+        const visibleChildren = enrichedDestinations.filter(d => isNodeVisible(d));
+
+        // Links from respective Hub nodes to their matching child nodes
+        const hubToChildLinks = visibleChildren.map(c => ({
+          source: `hub_${c.hub}`,
+          target: c.id
+        }));
+
+        return {
+          nodes: [centerNode, ...hubNodes, ...visibleChildren],
+          links: [...centerToHubLinks, ...hubToChildLinks]
+        };
+      } else {
+        return {
+          nodes: [centerNode, ...hubNodes],
+          links: centerToHubLinks
+        };
+      }
+    } else {
+      const hubNode = hubNodesMap[activeHub];
+      if (!hubNode) {
+        return { nodes: [], links: [] };
+      }
+      const related = enrichedDestinations.filter(d => d.hub === activeHub);
+      
+      // Cull children based on all multi-dimensional filters
+      const visibleChildren = related.filter(c => isNodeVisible(c));
+      const nodes = [hubNode, ...visibleChildren];
+
+      // Standard links from the center Hub to visible child nodes
+      const hubToChildLinks = visibleChildren.map(c => ({ source: hubNode.id, target: c.id }));
+
+      return { nodes, links: hubToChildLinks };
+    }
+  }, [activeHub, enrichedDestinations, centerNode, hubNodes, hubNodesMap, isNodeVisible, activeFilter, searchQuery, activeProvince, activeBudget, activeDuration, activeGroupSize]);
+
+  // D3 force tuning for galactic hub isolation & tight orbital clusters
+  useEffect(() => {
+    if (fgRef.current) {
+      const linkForce = fgRef.current.d3Force('link');
+      if (linkForce) {
+        // Set very long distance for center-to-hub links to isolate hubs
+        linkForce.distance(link => {
+          if (!link || !link.source || !link.target) return 45;
+          const s = link.source.id !== undefined ? link.source.id : link.source;
+          const t = link.target.id !== undefined ? link.target.id : link.target;
+          if (s === 'center' || t === 'center') {
+            return 380; // Push hubs much further out from the center (280 -> 380)
+          }
+          return 45; // Pull child destination nodes closer to their parent hubs (60 -> 45)
+        });
+
+        // Set strong pull to lock child destination nodes tightly in their orbital clusters
+        linkForce.strength(link => {
+          if (!link || !link.source || !link.target) return 0.7;
+          const s = link.source.id !== undefined ? link.source.id : link.source;
+          const t = link.target.id !== undefined ? link.target.id : link.target;
+          if (s === 'center' || t === 'center') {
+            return 0.7; // Standard center-to-hub link rigidity
+          }
+          return 1.0; // Strong pull (capped at 1.0 for numerical stability to prevent coordinate explosion)
+        });
+      }
+
+      const chargeForce = fgRef.current.d3Force('charge');
+      if (chargeForce) {
+        // Dynamic many-body repulsion: keep hubs isolated, while letting children cluster neatly
+        chargeForce.strength(node => {
+          if (!node) return -60;
+          if (node.isCenter) return -300;
+          if (node.isHub) return -2500; // Extremely powerful repulsion to keep the 6 hubs far apart!
+          return -60; // Soft repulsion for children to prevent direct overlap
+        });
+      }
+    }
+  }, [graphData]);
+
+  // Reset helper to clear all filters
+  const handleClearAllFilters = useCallback(() => {
+    setActiveProvince("All");
+    setActiveBudget("All");
+    setActiveDuration("All");
+    setActiveGroupSize(1);
+    setSearchQuery("");
+    setActiveFilter("All");
+  }, []);
 
   const drawHexagon = (ctx, x, y, r) => {
     ctx.beginPath();
@@ -235,7 +439,6 @@ export default function GraphView({ setView }) {
     const visible = isNodeVisible(node);
     const colorHex = getCategoryColor(node.hub || node.category);
     const isHovered = hoverNode && hoverNode.id === node.id;
-    const color = new THREE.Color(colorHex);
 
     const canvas = document.createElement('canvas');
     canvas.width = 512;
@@ -246,74 +449,61 @@ export default function GraphView({ setView }) {
 
     if (node.isHub) {
       const octRadius = 180;
-      // Glowing shadow border
-      ctx.shadowColor = colorHex;
-      ctx.shadowBlur = isHovered ? 50 : 25;
 
-      // Octagon background
-      ctx.fillStyle = '#1a1b2e';
+      // Glow effect around the hub octagon
+      ctx.shadowColor = colorHex;
+      ctx.shadowBlur = isHovered ? 55 : 25;
+
+      // Outer glowing radial gradient
+      const bgGrad = ctx.createRadialGradient(cx, cy, 10, cx, cy, octRadius);
+      bgGrad.addColorStop(0, 'rgba(26, 27, 46, 0.95)');
+      bgGrad.addColorStop(0.4, 'rgba(18, 19, 32, 0.98)');
+      bgGrad.addColorStop(1, '#0c0d14');
+      ctx.fillStyle = bgGrad;
+      
       drawOctagon(ctx, cx, cy, octRadius);
       ctx.fill();
-      ctx.shadowBlur = 0;
+      ctx.shadowBlur = 0; // Turn off shadow blur for text to avoid fuzzy fonts
 
-      // Draw collage if we have images
-      if (node.sampleImages && node.sampleImages.length > 0) {
-        ctx.save();
-        drawOctagon(ctx, cx, cy, octRadius);
-        ctx.clip();
+      // Draw subtle orbital dots inside the hub for a beautiful cosmic star chart detail
+      ctx.strokeStyle = colorHex + '25'; // very soft signature tint
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 130, 0, Math.PI * 2);
+      ctx.stroke();
 
-        // 2x2 grid positions
-        const cellSize = octRadius;
-        const offsets = [
-          { x: cx - cellSize, y: cy - cellSize },
-          { x: cx, y: cy - cellSize },
-          { x: cx - cellSize, y: cy },
-          { x: cx, y: cy }
-        ];
+      ctx.strokeStyle = colorHex + '15';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 8]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 100, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]); // clear dash
 
-        node.sampleImages.forEach((url, i) => {
-          const imgId = `${node.id}_img_${i}`;
-          const imgData = ImageCache.get(imgId);
-          if (imgData && imgData !== 'loading' && imgData !== 'error') {
-            ctx.drawImage(imgData, offsets[i].x, offsets[i].y, cellSize, cellSize);
-          } else if (!imgData) {
-            ImageCache.set(imgId, 'loading');
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.src = url;
-            img.onload = () => {
-              ImageCache.set(imgId, img);
-              if (node.__spriteMat) node.__spriteMat.map.needsUpdate = true;
-            };
-            img.onerror = () => ImageCache.set(imgId, 'error');
-          }
-        });
-
-        // Dark overlay for text readability
-        ctx.fillStyle = 'rgba(12, 13, 26, 0.45)';
-        drawOctagon(ctx, cx, cy, octRadius);
-        ctx.fill();
-        ctx.restore();
-      }
-
-      // Border
-      ctx.lineWidth = isHovered ? 15 : 8;
+      // Border glow accent
+      ctx.lineWidth = isHovered ? 12 : 6;
       ctx.strokeStyle = colorHex;
       drawOctagon(ctx, cx, cy, octRadius);
       ctx.stroke();
 
+      // Inner border accent ring
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = colorHex + '80';
+      drawOctagon(ctx, cx, cy, octRadius - 15);
+      ctx.stroke();
+
       // HUB Text
-      ctx.font = '800 48px Inter, system-ui, sans-serif';
+      ctx.font = '800 44px Inter, system-ui, sans-serif';
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.shadowColor = 'rgba(0,0,0,0.8)';
-      ctx.shadowBlur = 10;
-      ctx.fillText(node.name.toUpperCase(), cx, cy - 15);
+      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.shadowBlur = 8;
+      ctx.fillText(node.name.toUpperCase(), cx, cy - 18);
 
-      ctx.font = '600 28px Inter, system-ui, sans-serif';
+      ctx.font = '700 24px Inter, system-ui, sans-serif';
       ctx.fillStyle = colorHex;
-      ctx.fillText(`${node.count} DESTINATIONS`, cx, cy + 35);
+      ctx.fillText(`${node.count} DESTINATIONS`, cx, cy + 32);
 
       const texture = new THREE.CanvasTexture(canvas);
       texture.needsUpdate = true;
@@ -328,79 +518,45 @@ export default function GraphView({ setView }) {
     if (!visible) return new THREE.Group();
     const hexRadius = 140;
 
-    // Glowing shadow border
+    // Glowing border shadow for the destination planet hexagon
     ctx.shadowColor = colorHex;
-    ctx.shadowBlur = isHovered ? 45 : 20;
+    ctx.shadowBlur = isHovered ? 50 : 20;
 
-    // Hexagon background placeholder
-    ctx.fillStyle = '#1a1b2e';
+    // Radial gradient backing for destination hexagons
+    const bgGrad = ctx.createRadialGradient(cx, cy, 5, cx, cy, hexRadius);
+    bgGrad.addColorStop(0, 'rgba(26, 27, 46, 0.95)');
+    bgGrad.addColorStop(0.7, 'rgba(18, 19, 32, 0.98)');
+    bgGrad.addColorStop(1, '#0c0d14');
+    ctx.fillStyle = bgGrad;
+
     drawHexagon(ctx, cx, cy, hexRadius);
     ctx.fill();
-
     ctx.shadowBlur = 0;
 
-    const imgData = ImageCache.get(node.id);
-    const hasImageURL = !!node.imageUrl;
-
-    if (!hasImageURL || imgData === 'error') {
-      // Draw geometric placeholder
-      ctx.save();
-      drawHexagon(ctx, cx, cy, hexRadius);
-      ctx.clip();
-
-      // Dynamic gradient based on category color
-      const gradient = ctx.createLinearGradient(cx - hexRadius, cy - hexRadius, cx + hexRadius, cy + hexRadius);
-      gradient.addColorStop(0, colorHex + '40'); // 40 is hex opacity for ~25%
-      gradient.addColorStop(1, '#12131a');
-      ctx.fillStyle = gradient;
-      ctx.fill();
-
-      // Draw Initials
-      ctx.font = '800 72px Inter, system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const initials = node.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-      ctx.fillText(initials, cx, cy);
-
-      ctx.restore();
-    } else if (!imgData) {
-      ImageCache.set(node.id, 'loading');
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.src = node.imageUrl;
-      img.onload = () => {
-        ImageCache.set(node.id, img);
-        if (node.__spriteMat && node.__spriteCanvas) {
-          const tCtx = node.__spriteCanvas.getContext('2d');
-          tCtx.save();
-          drawHexagon(tCtx, cx, cy, hexRadius);
-          tCtx.clip();
-          tCtx.drawImage(img, cx - hexRadius, cy - hexRadius, hexRadius * 2, hexRadius * 2);
-          tCtx.restore();
-          tCtx.lineWidth = isHovered ? 12 : 6;
-          tCtx.strokeStyle = colorHex;
-          drawHexagon(tCtx, cx, cy, hexRadius);
-          tCtx.stroke();
-          node.__spriteMat.map.needsUpdate = true;
-        }
-      };
-      // Error handling for broken image URLs fallback
-      img.onerror = () => {
-        ImageCache.set(node.id, 'error');
-      };
-    } else if (imgData && imgData !== 'loading' && imgData !== 'error') {
-      ctx.save();
-      drawHexagon(ctx, cx, cy, hexRadius);
-      ctx.clip();
-      ctx.drawImage(imgData, cx - hexRadius, cy - hexRadius, hexRadius * 2, hexRadius * 2);
-      ctx.restore();
-    }
-
-    ctx.lineWidth = isHovered ? 12 : 6;
+    // Outer neon border
+    ctx.lineWidth = isHovered ? 10 : 5;
     ctx.strokeStyle = colorHex;
     drawHexagon(ctx, cx, cy, hexRadius);
     ctx.stroke();
+
+    // Inner thin border ring
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = colorHex + '60';
+    drawHexagon(ctx, cx, cy, hexRadius - 12);
+    ctx.stroke();
+
+    // Centered node initials in futuristic high-contrast layout
+    ctx.font = '800 78px Inter, system-ui, sans-serif';
+    ctx.fillStyle = isHovered ? '#ffffff' : colorHex;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // Add text shadow to initials for high legibility
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+    ctx.shadowBlur = 8;
+    const initials = node.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+    ctx.fillText(initials, cx, cy);
+    ctx.shadowBlur = 0;
 
     if (isHovered) {
       ctx.font = '800 36px Inter, system-ui, sans-serif';
@@ -409,13 +565,13 @@ export default function GraphView({ setView }) {
       const textY = cy + hexRadius + 15;
 
       const textW = ctx.measureText(node.name).width + 50;
-      ctx.fillStyle = 'rgba(18, 19, 26, 0.9)';
+      ctx.fillStyle = 'rgba(18, 19, 26, 0.95)';
       ctx.beginPath();
       ctx.roundRect(cx - textW / 2, textY, textW, 55, 27);
       ctx.fill();
 
       ctx.strokeStyle = colorHex;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2.5;
       ctx.stroke();
 
       ctx.fillStyle = '#ffffff';
@@ -425,7 +581,6 @@ export default function GraphView({ setView }) {
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
 
-    // THREE.Sprite natively perfectly billboards (faces camera)
     const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
     const sprite = new THREE.Sprite(spriteMaterial);
 
@@ -439,7 +594,11 @@ export default function GraphView({ setView }) {
   }, [isNodeVisible, getCategoryColor, hoverNode]);
 
   const linkColor = useCallback((link) => {
-    return 'rgba(255,255,255,0.06)';
+    return 'rgba(255,255,255,0.08)';
+  }, []);
+
+  const linkWidth = useCallback((link) => {
+    return 1.2;
   }, []);
 
   return (
@@ -485,30 +644,60 @@ export default function GraphView({ setView }) {
         </AnimatePresence>
       </div>
 
-      <AnimatePresence>
-        {activeHub && (
-          <FilterBar
-            activeFilter={activeFilter} setActiveFilter={setActiveFilter}
-            searchQuery={searchQuery} setSearchQuery={setSearchQuery}
-          />
-        )}
-      </AnimatePresence>
+      <FilterBar
+        searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+      />
+
+      <FloatingFilters
+        activeProvince={activeProvince}
+        setActiveProvince={setActiveProvince}
+        activeBudget={activeBudget}
+        setActiveBudget={setActiveBudget}
+        activeDuration={activeDuration}
+        setActiveDuration={setActiveDuration}
+        activeGroupSize={activeGroupSize}
+        setActiveGroupSize={setActiveGroupSize}
+        onClearAll={handleClearAllFilters}
+      />
 
       {/* Counter */}
-      <AnimatePresence>
-        {activeHub && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-6 left-6 z-20 glass-panel px-5 py-3 rounded-2xl text-sm"
-          >
+      <motion.div
+        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+        className="absolute bottom-6 left-6 z-20 glass-panel px-5 py-3 rounded-2xl text-sm"
+      >
+        {activeHub ? (
+          <>
             <span style={{ color: '#8888a8' }}>Showing </span>
             <span style={{ color: getCategoryColor(activeHub), fontWeight: 700 }}>
-              {graphData.nodes.filter(d => d.isChild && isNodeVisible(d)).length}
+              {(graphData?.nodes || []).filter(d => d.isChild && isNodeVisible(d)).length}
             </span>
             <span style={{ color: '#8888a8' }}> in {activeHub}</span>
-          </motion.div>
+          </>
+        ) : (
+          (() => {
+            const matchesCount = (graphData?.nodes || []).filter(d => d.isChild && isNodeVisible(d)).length;
+            const isFilterActive =
+              searchQuery.trim().length > 0 ||
+              activeFilter !== "All" ||
+              activeProvince !== "All" ||
+              activeBudget !== "All" ||
+              activeDuration !== "All" ||
+              activeGroupSize > 1;
+
+            return isFilterActive ? (
+              <>
+                <span style={{ color: '#8888a8' }}>Found </span>
+                <span style={{ color: '#22d3ee', fontWeight: 700 }}>
+                  {matchesCount}
+                </span>
+                <span style={{ color: '#8888a8' }}> matching destinations</span>
+              </>
+            ) : (
+              <span style={{ color: '#8888a8' }}>Explore the 6 Galactic Tourism Hubs</span>
+            );
+          })()
         )}
-      </AnimatePresence>
+      </motion.div>
 
       {/* Legend */}
       <AnimatePresence>
@@ -540,18 +729,24 @@ export default function GraphView({ setView }) {
 
       {/* 3D Force Graph — transparent so midnight mesh shows through */}
       <div ref={containerRef} className="w-full h-full relative" style={{ zIndex: 1 }}>
-        <ForceGraph3D
-          ref={fgRef} graphData={graphData}
-          nodeThreeObject={nodeThreeObject} nodeThreeObjectExtend={false}
-          onNodeClick={handleNodeClick}
-          onNodeHover={node => { setHoverNode(node); if (containerRef.current) containerRef.current.style.cursor = node ? 'pointer' : 'grab'; }}
-          backgroundColor="rgba(0,0,0,0)"
-          width={dimensions.width} height={dimensions.height}
-          linkWidth={1.5} linkColor={linkColor} linkOpacity={0.5} linkResolution={6}
-          enableNodeDrag={false}
-          warmupTicks={50} cooldownTicks={100}
-          d3AlphaDecay={0.02} d3VelocityDecay={0.3}
-        />
+        {graphData && graphData.nodes && graphData.nodes.length > 0 ? (
+          <ForceGraph3D
+            ref={fgRef} graphData={graphData}
+            nodeThreeObject={nodeThreeObject} nodeThreeObjectExtend={false}
+            onNodeClick={handleNodeClick}
+            onNodeHover={node => { setHoverNode(node); if (containerRef.current) containerRef.current.style.cursor = node ? 'pointer' : 'grab'; }}
+            backgroundColor="rgba(0,0,0,0)"
+            width={dimensions.width} height={dimensions.height}
+            linkWidth={linkWidth} linkColor={linkColor} linkOpacity={0.5} linkResolution={6}
+            enableNodeDrag={false}
+            warmupTicks={50} cooldownTicks={100}
+            d3AlphaDecay={0.02} d3VelocityDecay={0.3}
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center text-cyan-400 font-medium tracking-widest text-xs uppercase animate-pulse">
+            Initializing galactic coordinates...
+          </div>
+        )}
       </div>
 
       <AnimatePresence>

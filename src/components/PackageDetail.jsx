@@ -74,7 +74,7 @@ export default function PackageDetail({ pkg, destinationName, destinationCategor
         {/* Hero Image */}
         <div className="w-full h-44 mb-5 rounded-2xl overflow-hidden relative" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
            <img 
-              src={`https://loremflickr.com/600/300/pakistan,${encodeURIComponent(destinationName.replace(/ /g, ','))}`}
+              src={`https://picsum.photos/seed/${encodeURIComponent(destinationName)}/600/300`}
               alt={destinationName}
               className="w-full h-full object-cover"
            />
